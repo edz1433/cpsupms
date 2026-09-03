@@ -122,22 +122,6 @@ class Employee extends Model
         return $this->partTimeFundCluster ?: $this->fundCluster;
     }
 
-    /**
-     * Daily, hourly and per-minute rates all follow from the monthly salary, so the
-     * employee form and the HRIS sync derive them the same way.
-     */
-    public static function ratesFromMonthlySalary(float $monthlySalary): array
-    {
-        $ratePerDay = round($monthlySalary / 22, 2);
-        $ratePerHour = round($ratePerDay / 8, 2);
-
-        return [
-            'rate_per_day' => $ratePerDay,
-            'rate_per_hour' => $ratePerHour,
-            'rate_per_minute' => round($ratePerHour / 60, 4),
-        ];
-    }
-
     public function scopeVisibleTo(Builder $query, User $user): Builder
     {
         if ($user->isUniversityWide()) {

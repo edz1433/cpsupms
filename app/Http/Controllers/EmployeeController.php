@@ -195,6 +195,13 @@ class EmployeeController extends Controller
 
     private function ratesFromMonthlySalary(float $monthlySalary): array
     {
-        return Employee::ratesFromMonthlySalary($monthlySalary);
+        $ratePerDay = round($monthlySalary / 22, 2);
+        $ratePerHour = round($ratePerDay / 8, 2);
+
+        return [
+            'rate_per_day' => $ratePerDay,
+            'rate_per_hour' => $ratePerHour,
+            'rate_per_minute' => round($ratePerHour / 60, 4),
+        ];
     }
 }

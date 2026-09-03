@@ -5,12 +5,9 @@ namespace App\Services;
 use App\Models\HrisSyncLog;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 class HrisDatabaseService
 {
-    private ?bool $hasMonthlySalary = null;
-
     public function checkConnection(?User $user = null): array
     {
         $started = microtime(true);
@@ -37,29 +34,21 @@ class HrisDatabaseService
     {
         $started = microtime(true);
 
-        $columns = [
-            'emp_ID',
-            'fname',
-            'mname',
-            'lname',
-            'prefix',
-            'suffix',
-            'position',
-            'emp_dept',
-            'emp_status',
-            'camp_id',
-        ];
-
-        // Older HRIS databases have no salary column; read it only where it exists so
-        // the sync still runs against them.
-        if ($this->hrisHasMonthlySalary()) {
-            $columns[] = 'monthly_salary';
-        }
-
         try {
             $query = DB::connection('hris')
                 ->table('employees')
-                ->select($columns)
+                ->select([
+                    'emp_ID',
+                    'fname',
+                    'mname',
+                    'lname',
+                    'prefix',
+                    'suffix',
+                    'position',
+                    'emp_dept',
+                    'emp_status',
+                    'camp_id',
+                ])
                 ->where('stat_1', 1)
                 ->whereNotNull('emp_ID')
                 ->where('emp_ID', '<>', '');
@@ -97,23 +86,6 @@ class HrisDatabaseService
                 'message' => 'Unable to read employees from the HRIS database.',
             ];
         }
-    }
-
-    /**
-     * Cached for the request: the column check costs a query and the sync reads
-     * employees more than once per run.
-     */
-    private function hrisHasMonthlySalary(): bool
-    {
-        if ($this->hasMonthlySalary === null) {
-            try {
-                $this->hasMonthlySalary = Schema::connection('hris')->hasColumn('employees', 'monthly_salary');
-            } catch (\Throwable) {
-                $this->hasMonthlySalary = false;
-            }
-        }
-
-        return $this->hasMonthlySalary;
     }
 
     private function log(
