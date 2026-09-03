@@ -6,7 +6,6 @@ use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\FundClusterController;
 use App\Http\Controllers\HrisSettingsController;
 use App\Http\Controllers\PayrollBatchController;
-use App\Http\Controllers\PayrollPeriodController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -36,7 +35,6 @@ Route::middleware('auth')->group(function () {
     Route::put('/employees/{employee}/part-time', [EmployeeController::class, 'updatePartTime'])->name('employees.part-time.update');
     Route::post('/employees/sync-hris', [EmployeeController::class, 'syncFromHris'])->name('employees.sync-hris');
     Route::get('/fund-clusters', [FundClusterController::class, 'index'])->name('fund-clusters.index');
-    Route::get('/periods', [PayrollPeriodController::class, 'index'])->name('periods.index');
 
     Route::get('/payroll', [PayrollBatchController::class, 'index'])->name('payroll.index');
     Route::get('/payroll/create', [PayrollBatchController::class, 'create'])->name('payroll.create');

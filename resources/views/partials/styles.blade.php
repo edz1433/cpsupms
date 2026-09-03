@@ -105,4 +105,44 @@ nav[role="navigation"]{display:flex;align-items:center;justify-content:space-bet
 .command-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 .command-actions form{margin:0}
 @media(max-width:900px){.payroll-command{flex-direction:column;align-items:stretch}.command-actions{justify-content:stretch}.command-actions>*{flex:1}.command-actions .primary-btn,.command-actions .ghost-btn,.command-actions .danger-btn,.command-actions .gold-btn{width:100%}}
+
+.process-overlay{border:0;padding:0;background:transparent;overflow:visible;max-width:min(440px,92vw);color:#1f2937}
+.process-overlay::backdrop{background:rgba(14,26,18,.62);backdrop-filter:blur(3px)}
+.process-overlay-panel{display:grid;justify-items:center;gap:0;border:1px solid var(--cpsu-border);border-radius:18px;background:#fff;padding:34px 30px 26px;box-shadow:0 24px 60px -20px rgba(11,42,22,.55),0 2px 6px rgba(16,24,40,.08);text-align:center}
+.process-overlay-panel h2{margin:20px 0 0;font-size:19px;font-weight:900;letter-spacing:-.01em;color:#0f2417}
+.process-overlay-message{margin:7px 0 0;font-size:13.5px;line-height:1.45;color:#475467;max-width:34ch}
+.process-overlay-hint{display:flex;align-items:center;justify-content:center;gap:7px;margin:18px 0 0;padding:9px 12px;border:1px solid #f4df6a;border-radius:9px;background:#fffaf0;color:#7a5c00;font-size:11.5px;font-weight:750;line-height:1.35;text-align:left}
+.process-overlay-hint .icon{width:15px;height:15px;flex:none}
+
+.process-spinner{position:relative;width:78px;height:78px;display:grid;place-items:center}
+.process-spinner-track{position:absolute;inset:0;border-radius:999px;border:5px solid #e8efe6}
+.process-spinner-arc{position:absolute;inset:0;border-radius:999px;border:5px solid transparent;border-top-color:var(--cpsu-green);animation:process-spin 1.05s cubic-bezier(.55,.15,.45,.85) infinite}
+.process-spinner-arc.alt{inset:11px;border-width:4px;border-top-color:transparent;border-bottom-color:var(--cpsu-gold);animation-duration:1.5s;animation-direction:reverse}
+.process-spinner-mark{font-size:11px;font-weight:950;letter-spacing:.08em;color:var(--cpsu-green)}
+
+.process-progress{width:100%;height:5px;margin-top:20px;border-radius:999px;background:#e8efe6;overflow:hidden}
+.process-progress span{display:block;width:38%;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--cpsu-green),#3ba05e,var(--cpsu-gold));animation:process-slide 1.5s ease-in-out infinite}
+
+body.process-locked{cursor:progress}
+@keyframes process-spin{to{transform:rotate(360deg)}}
+@keyframes process-slide{0%{transform:translateX(-110%)}100%{transform:translateX(300%)}}
+@media(prefers-reduced-motion:reduce){
+.process-spinner-arc,.process-progress span{animation-duration:2.4s;animation-timing-function:linear}
+}
+
+.generate-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px 16px}
+.generate-grid.generate-grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.generate-grid .generate-span{grid-column:1/-1}
+.generate-grid .field span{font-size:11px;font-weight:850;letter-spacing:.01em;color:#344054;margin-bottom:6px}
+.field-hint{margin-left:auto;font-style:normal;font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#98a2b3}
+.fund-chips{display:flex;flex-wrap:wrap;align-content:center;gap:5px;min-height:40px;padding:7px 9px;border:1px solid var(--cpsu-border);border-radius:8px;background:linear-gradient(180deg,#fbfcf8,#f5f8f2)}
+.fund-chip{display:inline-flex;align-items:center;height:24px;padding:0 9px;border:1px solid #d8e3d2;border-radius:6px;background:#fff;color:#31513c;font-size:10.5px;font-weight:900;letter-spacing:.05em;white-space:nowrap;box-shadow:0 1px 1px rgba(16,24,40,.04)}
+.section-rule{display:flex;align-items:center;gap:11px;margin:2px 0 0}
+.section-rule span{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.13em;color:#8a98a5;white-space:nowrap}
+.section-rule::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--cpsu-border),transparent)}
+.card-header+.generate-grid{margin-top:16px}
+.card .section-rule{margin-top:18px}
+.card .section-rule+.generate-grid{margin-top:14px}
+@media(max-width:900px){.generate-grid.generate-grid-3{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){.generate-grid,.generate-grid.generate-grid-3{grid-template-columns:1fr}}
 </style>

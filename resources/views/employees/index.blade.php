@@ -10,7 +10,10 @@
         <div class="card-header">
             <div><h2>Employees</h2><div class="card-kicker">Campus-scoped payroll records and salary references</div></div>
             @if($user->canManageHris())
-                <form class="hris-sync-form" method="POST" action="{{ route('employees.sync-hris') }}">
+                <form class="hris-sync-form" method="POST" action="{{ route('employees.sync-hris') }}"
+                    data-process-overlay-trigger
+                    data-process-title="Syncing employees from HRIS"
+                    data-process-message="Reading employee records directly from the HRIS database and updating payroll. Larger campuses take longer.">
                     @csrf
                     <button class="gold-btn" type="submit">
                         <span class="button-spinner" aria-hidden="true"></span>

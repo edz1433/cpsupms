@@ -22,6 +22,7 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call(OfficeSeeder::class);
+        $this->call(QualificationSeeder::class);
 
         $roles = collect([
             'Super Administrator',

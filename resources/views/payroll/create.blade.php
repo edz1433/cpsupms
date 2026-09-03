@@ -1,5 +1,8 @@
 <x-layouts.app page-title="Generate Payroll" page-subtitle="Select campus, period, and employee group - a draft is generated for every payroll fund">
-    <form class="card" method="POST" action="{{ route('payroll.store') }}">
+    <form class="card" method="POST" action="{{ route('payroll.store') }}"
+        data-process-overlay-trigger
+        data-process-title="Generating payroll"
+        data-process-message="Reading attendance from HRIS and computing a draft for every payroll fund. This can take a few minutes for a full campus.">
         @csrf
         <div class="card-header">
             <div><h2>Payroll Generation Details</h2><div class="card-kicker">One run creates a draft per payroll fund, each storing computed line snapshots for review.</div></div>

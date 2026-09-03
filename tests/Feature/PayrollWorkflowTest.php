@@ -1421,7 +1421,6 @@ class PayrollWorkflowTest extends TestCase
         $this->actingAs($user)->get(route('dashboard'))->assertOk();
         $this->actingAs($user)->get(route('employees.index'))->assertOk();
         $this->actingAs($user)->get(route('fund-clusters.index'))->assertOk();
-        $this->actingAs($user)->get(route('periods.index'))->assertOk();
         $this->actingAs($user)->get(route('payroll.index'))->assertOk();
         $this->actingAs($user)->get(route('payroll.create'))->assertOk();
         $this->actingAs($user)->get(route('settings.hris'))->assertOk();
@@ -1480,7 +1479,7 @@ class PayrollWorkflowTest extends TestCase
         $this->assertStringNotContainsString('.campus-stat+.campus-stat{border-left', $html);
     }
 
-    public function test_payroll_periods_show_previous_and_current_month_windows(): void
+    public function test_payroll_periods_are_generated_for_every_month_of_the_current_year(): void
     {
         CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-08-10 08:00:00'));
 
@@ -1488,20 +1487,25 @@ class PayrollWorkflowTest extends TestCase
             $this->seed();
 
             $user = User::where('email', 'super@cpsu.edu.ph')->firstOrFail();
-            $expectedPeriods = [
-                'July 1-15, 2026',
-                'July 16-31, 2026',
-                'August 1-15, 2026',
-                'August 16-31, 2026',
-            ];
-
-            $periodsResponse = $this->actingAs($user)->get(route('periods.index'))->assertOk();
             $createResponse = $this->actingAs($user)->get(route('payroll.create'))->assertOk();
 
-            foreach ($expectedPeriods as $period) {
-                $periodsResponse->assertSee($period);
+            // Two semi-monthly windows for each of the twelve months, no hand-entry.
+            $this->assertSame(24, PayrollPeriod::whereNull('campus_id')->count());
+
+            foreach ([
+                'January 1-15, 2026',
+                'February 16-28, 2026',
+                'August 1-15, 2026',
+                'August 16-31, 2026',
+                'December 16-31, 2026',
+            ] as $period) {
+                $this->assertDatabaseHas('payroll_periods', ['name' => $period]);
                 $createResponse->assertSee($period);
             }
+
+            // The year boundary is respected on both ends.
+            $this->assertDatabaseMissing('payroll_periods', ['name' => 'December 16-31, 2025']);
+            $this->assertDatabaseMissing('payroll_periods', ['name' => 'January 1-15, 2027']);
         } finally {
             CarbonImmutable::setTestNow();
         }
@@ -1516,15 +1520,8 @@ class PayrollWorkflowTest extends TestCase
         $this->actingAs($user)
             ->get(route('payroll.create'))
             ->assertOk()
-            // The fund is no longer chosen; the form lists the funds one run will cover.
+            // The fund is never chosen - one run always covers every fund.
             ->assertDontSee('name="fund_cluster_id"', false)
-            ->assertSee('>PT</span>', false)
-            ->assertSee('>INC</span>', false)
-            ->assertSee('>MDS</span>', false)
-            ->assertSee('>PROJ</span>', false)
-            ->assertSee('>BUSTYPE</span>', false)
-            ->assertSee('>YEARBOOK</span>', false)
-            ->assertSee('>SUPPORT SERVICES</span>', false)
             ->assertDontSee('Common Fund')
             ->assertDontSee('MDS-GAA')
             ->assertDontSee('Construction of Science Complex');
@@ -1594,6 +1591,28 @@ class PayrollWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_long_hris_runs_are_covered_by_a_blocking_overlay(): void
+    {
+        $this->seed();
+
+        $user = User::where('email', 'super@cpsu.edu.ph')->firstOrFail();
+
+        // The HRIS employee sync is the slowest thing on the employees page.
+        $this->actingAs($user)
+            ->get(route('employees.index'))
+            ->assertOk()
+            ->assertSee('data-process-overlay-trigger', false)
+            ->assertSee('Syncing employees from HRIS', false)
+            ->assertSee('data-process-overlay', false);
+
+        // Payroll generation reads attendance for every employee in the run.
+        $this->actingAs($user)
+            ->get(route('payroll.index'))
+            ->assertOk()
+            ->assertSee('data-process-overlay-trigger', false)
+            ->assertSee('Generating payroll', false)
+            ->assertSee('Keep this tab open.', false);
+    }
     public function test_employment_statuses_come_from_the_statuses_table(): void
     {
         $this->seed();

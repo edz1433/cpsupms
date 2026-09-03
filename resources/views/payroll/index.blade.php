@@ -48,12 +48,14 @@
 
     @if($canManagePayroll)
         <dialog class="modal" id="payroll-create-modal" @if($reopenCreate) data-auto-open="1" @endif>
-            <form class="modal-panel" method="POST" action="{{ route('payroll.store') }}">
+            <form class="modal-panel" method="POST" action="{{ route('payroll.store') }}"
+                data-process-overlay-trigger
+                data-process-title="Generating payroll"
+                data-process-message="Reading attendance from HRIS and computing a draft for every payroll fund. This can take a few minutes for a full campus.">
                 @csrf
                 <div class="modal-header">
                     <div>
                         <h2>Generate Payroll</h2>
-                        <div class="card-kicker">One run creates a draft per payroll fund, each storing computed line snapshots for review.</div>
                     </div>
                     <button class="ghost-btn icon-btn" type="button" data-close-payroll-create title="Close">
                         <span aria-hidden="true">&times;</span>

@@ -25,7 +25,6 @@
         ['Payroll', 'payroll.index', 'payroll', 'payroll'],
         ['Employees', 'employees.index', 'employees', 'employees'],
         ['Fund Clusters', 'fund-clusters.index', 'fund-clusters', 'funds'],
-        ['Periods', 'periods.index', 'periods', 'calendar'],
     ];
 
     if ($user->canManageHris()) {
@@ -118,6 +117,94 @@
         });
 
         updateToggleLabels();
+    })();
+</script>
+@include('partials.process-overlay')
+<script>
+    (function () {
+        const overlay = document.querySelector('[data-process-overlay]');
+
+        if (!overlay || typeof overlay.showModal !== 'function') {
+            return;
+        }
+
+        const titleEl = overlay.querySelector('[data-process-overlay-title]');
+        const messageEl = overlay.querySelector('[data-process-overlay-message]');
+        let running = false;
+
+        function warnBeforeUnload(event) {
+            event.preventDefault();
+            event.returnValue = '';
+
+            return '';
+        }
+
+        // The run cannot be dismissed with Escape - it is still going on the server.
+        overlay.addEventListener('cancel', function (event) {
+            event.preventDefault();
+        });
+
+        function start(form) {
+            titleEl.textContent = form.dataset.processTitle || 'Working';
+            messageEl.textContent = form.dataset.processMessage || 'This may take a moment.';
+
+            if (!overlay.open) {
+                overlay.showModal();
+            }
+
+            document.body.classList.add('process-locked');
+            window.addEventListener('beforeunload', warnBeforeUnload);
+            running = true;
+        }
+
+        function reset() {
+            running = false;
+            window.removeEventListener('beforeunload', warnBeforeUnload);
+            document.body.classList.remove('process-locked');
+
+            if (overlay.open) {
+                overlay.close();
+            }
+
+            document.body.classList.remove('process-locked');
+            document.querySelectorAll('form[data-process-overlay-trigger] [disabled][data-process-disabled]').forEach(function (control) {
+                control.disabled = false;
+                control.removeAttribute('aria-busy');
+                control.removeAttribute('data-process-disabled');
+            });
+        }
+
+        document.querySelectorAll('form[data-process-overlay-trigger]').forEach(function (form) {
+            form.addEventListener('submit', function (event) {
+                // A second click while a run is in flight must not start another one.
+                if (running) {
+                    event.preventDefault();
+
+                    return;
+                }
+
+                if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+                    return;
+                }
+
+                start(form);
+
+                // Disabled after the submit is under way, so the button value still posts.
+                window.setTimeout(function () {
+                    form.querySelectorAll('button, input[type="submit"]').forEach(function (control) {
+                        if (!control.disabled) {
+                            control.disabled = true;
+                            control.setAttribute('aria-busy', 'true');
+                            control.setAttribute('data-process-disabled', '');
+                        }
+                    });
+                }, 0);
+            });
+        });
+
+        // Covers the back button and bfcache restores, where the overlay would
+        // otherwise come back still showing.
+        window.addEventListener('pageshow', reset);
     })();
 </script>
 </body>
