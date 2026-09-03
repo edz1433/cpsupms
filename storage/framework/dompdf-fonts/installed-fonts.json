@@ -1,0 +1,20 @@
+{
+    "broadway": {
+        "normal": "broadway_normal_f869ae45becf04112dff27d8014ac9ca"
+    },
+    "broadway bt": {
+        "normal": "broadway_bt_normal_f869ae45becf04112dff27d8014ac9ca"
+    },
+    "broadwayp": {
+        "normal": "broadwayp_normal_f869ae45becf04112dff27d8014ac9ca"
+    },
+    "bauhaus 93": {
+        "normal": "bauhaus_93_normal_5776d48ec3788cd4d4f88a4f458e6175"
+    },
+    "arial": {
+        "normal": "D:\\xampp\\htdocs\\cpsu-payroll\\storage\\framework\/dompdf-fonts\/arial_normal_9a0e439fcbdd87f39f7946780927f81a",
+        "bold": "D:\\xampp\\htdocs\\cpsu-payroll\\storage\\framework\/dompdf-fonts\/arial_bold_c8f0057d4d15d2739c543a04b0957fd5",
+        "italic": "D:\\xampp\\htdocs\\cpsu-payroll\\storage\\framework\/dompdf-fonts\/arial_italic_78bb65293283cd22fa4329ab3c810456",
+        "bold_italic": "arial_bold_italic_4feb8fb67959f700088288c9d1df7010"
+    }
+}
