@@ -40,13 +40,28 @@ class PayrollBatchService
                 ->get()
                 ->keyBy('template_type');
 
+            $isPartTimeRun = ($data['payroll_employee_type'] ?? null) === PayrollEmployeeTypeService::PARTTIME_PARTTIME;
+
             $employees = Employee::query()
-                ->with('fundCluster')
+                ->with(['fundCluster', 'partTimeFundCluster'])
                 ->where('campus_id', $data['campus_id'])
                 ->where('is_active', true)
-                ->tap(fn ($query) => $this->employeeTypes->apply($query, $data['payroll_employee_type']))
+                ->where(function ($query) use ($data, $isPartTimeRun) {
+                    $query->tap(fn ($typeQuery) => $this->employeeTypes->apply($typeQuery, $data['payroll_employee_type']));
+
+                    // A part-time post lives on the employee's own record now, so anyone
+                    // carrying an hourly part-time rate joins this run too.
+                    if ($isPartTimeRun) {
+                        $query->orWhere('part_time_rate_per_hour', '>', 0);
+                    }
+                })
                 ->orderBy('full_name')
                 ->get();
+
+            // Paid hourly on this run instead of from their monthly salary.
+            $partTimeEmployeeIds = $isPartTimeRun
+                ? $employees->filter(fn (Employee $employee) => $employee->hasPartTimeAssignment())->pluck('id')->flip()->all()
+                : [];
 
             $runRef = 'RUN-'.now()->format('YmdHis').'-'.random_int(100, 999);
             $result = [
@@ -54,6 +69,7 @@ class PayrollBatchService
                 'batches' => collect(),
                 'employees' => $employees->count(),
                 'unassigned' => $employees->filter(fn (Employee $employee) => ! $employee->fund_cluster_id)->count(),
+                'part_time' => count($partTimeEmployeeIds),
                 'skipped_funds' => [],
                 'tardiness_sync' => ['status' => 'skipped'],
             ];
@@ -66,7 +82,9 @@ class PayrollBatchService
             $tardinessSync = $this->tardiness->syncForPayroll($period, $data['campus_id'], $employees, $user);
             $result['tardiness_sync'] = $tardinessSync;
 
-            $grouped = $employees->groupBy(fn (Employee $employee) => $this->fundTypes->typeForEmployee($employee, $fundsByType));
+            $grouped = $employees->groupBy(fn (Employee $employee) => isset($partTimeEmployeeIds[$employee->id])
+                ? $this->fundTypes->typeForPartTimeEmployee($employee, $fundsByType)
+                : $this->fundTypes->typeForEmployee($employee, $fundsByType));
             $fundedTypes = $fundsByType->keys()->filter(fn ($type) => $grouped->has($type) && $grouped->get($type)->isNotEmpty())->values();
 
             foreach ($fundedTypes as $position => $type) {
@@ -87,6 +105,7 @@ class PayrollBatchService
                     $grouped->get($type),
                     $tardinessSync,
                     ['ref' => $runRef, 'index' => $position + 1, 'total' => $fundedTypes->count(), 'funds' => $fundedTypes->all()],
+                    $partTimeEmployeeIds,
                 ));
             }
 
@@ -164,6 +183,7 @@ class PayrollBatchService
         Collection $employees,
         array $tardinessSync,
         array $run,
+        array $partTimeEmployeeIds = [],
     ): PayrollBatch {
         $batch = PayrollBatch::create([
             'campus_id' => $data['campus_id'],
@@ -198,7 +218,11 @@ class PayrollBatchService
                 $attendance->setAttribute('review_items', []);
             }
 
-            PayrollLine::create($this->computation->computeLine($employee, $period, $template, $attendance) + [
+            $computed = isset($partTimeEmployeeIds[$employee->id])
+                ? $this->computation->computePartTimeLine($employee, $period, $template, $attendance)
+                : $this->computation->computeLine($employee, $period, $template, $attendance);
+
+            PayrollLine::create($computed + [
                 'payroll_batch_id' => $batch->id,
                 'employee_id' => $employee->id,
                 'line_no' => $index + 1,

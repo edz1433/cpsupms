@@ -224,6 +224,10 @@ class HrisTardinessSyncService
             $issues[] = 'missing time-out';
         }
 
+        if (filter_var($day['duplicate_dtr_rows'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            $issues[] = 'duplicate DTR rows';
+        }
+
         $issues = collect($issues)->unique()->values()->all();
 
         if ($issues === []) {
@@ -241,6 +245,17 @@ class HrisTardinessSyncService
             'times' => $times,
             'late_minutes' => (int) $this->firstValue([$day], ['late_minutes', 'total_late_minutes', 'minutes_late'], 0),
             'undertime_minutes' => (int) $this->firstValue([$day], ['undertime_minutes', 'total_undertime_minutes', 'minutes_undertime'], 0),
+            'deductible_minutes' => (int) ($day['deductible_minutes'] ?? 0),
+            'schedule' => $day['schedule'] ?? null,
+            'timeline' => $day['timeline'] ?? [],
+            'review_reasons' => $day['review_reasons'] ?? [],
+            'morning_late_minutes' => (int) ($day['morning_late_minutes'] ?? 0),
+            'afternoon_late_minutes' => (int) ($day['afternoon_late_minutes'] ?? 0),
+            'morning_undertime_minutes' => (int) ($day['morning_undertime_minutes'] ?? 0),
+            'afternoon_undertime_minutes' => (int) ($day['afternoon_undertime_minutes'] ?? 0),
+            'usable_time_in_count' => (int) ($day['usable_time_in_count'] ?? 0),
+            'usable_time_out_count' => (int) ($day['usable_time_out_count'] ?? 0),
+            'dtr_ids' => $day['dtr_ids'] ?? [],
         ];
     }
 

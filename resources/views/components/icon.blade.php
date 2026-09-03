@@ -56,6 +56,9 @@
         @case('x')
             <path d="M18 6 6 18" /><path d="m6 6 12 12" />
             @break
+        @case('clock')
+            <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z" /><path d="M12 7v5l3 2" />
+            @break
         @case('edit')
             <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z" />
             @break

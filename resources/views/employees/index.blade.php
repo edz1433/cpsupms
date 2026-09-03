@@ -70,10 +70,10 @@
 
             <label class="filter-field">
                 <span>Type</span>
-                <select name="employment_type">
+                <select name="status_id">
                     <option value="">All types</option>
-                    @foreach($employmentTypes as $type => $label)
-                        <option value="{{ $type }}" @selected(($filters['employment_type'] ?? '') === $type)>{{ $label }}</option>
+                    @foreach($statuses as $status)
+                        <option value="{{ $status->id }}" @selected((int) ($filters['status_id'] ?? 0) === $status->id)>{{ $status->status_name }}</option>
                     @endforeach
                 </select>
             </label>
@@ -107,7 +107,12 @@
                 <td>{{ $employee->campus?->code }}</td>
                 <td>{{ $employee->office?->office_name }}</td>
                 <td>{{ $employee->designation }}</td>
-                <td><span class="badge gray">{{ $employeeTypeService->normalize($employee->employment_type) }}</span></td>
+                <td>
+                    <span class="badge gray">{{ $employee->status?->status_name }}</span>
+                    @if($employee->hasPartTimeAssignment())
+                        <span class="badge" title="Also paid on the Part-time/Part-time payroll at {{ number_format($employee->part_time_rate_per_hour, 2) }} per hour">PT {{ number_format($employee->part_time_rate_per_hour, 2) }}/hr</span>
+                    @endif
+                </td>
                 <td>{{ $employee->fundCluster?->fund_source_name }}</td>
                 <td class="num">{{ number_format($employee->monthly_salary, 2) }}</td>
                 <td class="num">{{ number_format($employee->tax_rate * 100, 0) }}%</td>
@@ -124,7 +129,7 @@
                             data-fund-cluster-id="{{ $employee->fund_cluster_id }}"
                             data-office-id="{{ $employee->office_id }}"
                             data-designation="{{ $employee->designation }}"
-                            data-employment-type="{{ $employeeTypeService->normalize($employee->employment_type) }}"
+                            data-status-id="{{ $employee->status_id }}"
                             data-salary-grade="{{ $employee->salary_grade }}"
                             data-monthly-salary="{{ $employee->monthly_salary }}"
                             data-rate-per-day="{{ $employee->rate_per_day }}"
@@ -142,6 +147,18 @@
                             data-is-active="{{ $employee->is_active ? '1' : '0' }}"
                         >
                             <x-icon name="edit" />
+                        </button>
+                        <button
+                            class="ghost-btn icon-btn employee-part-time-button"
+                            type="button"
+                            title="Set part-time rate"
+                            data-part-time-url="{{ route('employees.part-time.update', $employee) }}"
+                            data-part-time-name="{{ $employee->full_name }}"
+                            data-part-time-rate-per-hour="{{ number_format((float) $employee->part_time_rate_per_hour, 2, '.', '') }}"
+                            data-part-time-fund-cluster-id="{{ $employee->part_time_fund_cluster_id }}"
+                            data-default-fund-cluster-id="{{ $employee->fund_cluster_id }}"
+                        >
+                            <x-icon name="clock" />
                         </button>
                     </td>
                 @endif
@@ -182,7 +199,7 @@
                         <label class="field"><span>Fund Cluster</span><select class="select" id="edit_fund_cluster_id" name="fund_cluster_id"><option value="">Unassigned</option>@foreach($fundClusters as $fund)<option value="{{ $fund->id }}">{{ $fund->code }} - {{ $fund->fund_source_name }}</option>@endforeach</select></label>
                         <label class="field"><span>Office</span><select class="select" id="edit_office_id" name="office_id"><option value="">Unassigned</option>@foreach($offices as $office)<option value="{{ $office->id }}">{{ $office->office_name }}</option>@endforeach</select></label>
                         <label class="field"><span>Designation</span><input class="input" id="edit_designation" name="designation" type="text"></label>
-                        <label class="field"><span>Employee Status</span><select class="select" id="edit_employment_type" name="employment_type" required>@foreach($employmentTypes as $type => $label)<option value="{{ $label }}">{{ $label }}</option>@endforeach</select></label>
+                        <label class="field"><span>Employee Status</span><select class="select" id="edit_status_id" name="status_id" required>@foreach($statuses as $status)<option value="{{ $status->id }}">{{ $status->status_name }}</option>@endforeach</select></label>
                         <label class="field"><span>Salary Grade</span><input class="input" id="edit_salary_grade" name="salary_grade" type="text"></label>
                         <label class="field"><span>Monthly Salary</span><input class="input" id="edit_monthly_salary" name="monthly_salary" type="number" min="0" step="0.01" required></label>
                         <label class="field"><span>Rate Per Day</span><input class="input" id="edit_rate_per_day" name="rate_per_day" type="number" min="0" step="0.01" readonly required></label>
@@ -204,6 +221,39 @@
                 <div class="modal-footer">
                     <button class="ghost-btn" type="button" data-close-employee-modal>Cancel</button>
                     <button class="primary-btn" type="submit"><x-icon name="check" /> Save Changes</button>
+                </div>
+            </form>
+        </dialog>
+
+        <dialog class="modal" id="employee-part-time-modal">
+            <form class="modal-panel" method="POST" id="employee-part-time-form">
+                @csrf
+                @method('PUT')
+                <div class="modal-header">
+                    <div>
+                        <h2>Part-time Rate</h2>
+                        <div class="card-kicker" id="part_time_employee_name">Part-time/Part-time payroll</div>
+                    </div>
+                    <button class="ghost-btn icon-btn" type="button" data-close-part-time-modal title="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+
+                <div class="modal-body">
+                    <p class="card-kicker" style="margin-bottom:12px">
+                        A rate above zero means this employee also holds a part-time post, so they are
+                        included in the Part-time/Part-time payroll and paid for the hours they render.
+                        Set it to 0 to remove the part-time post. No separate employee record is needed.
+                    </p>
+                    <div class="modal-grid">
+                        <label class="field"><span>Part-time Rate Per Hour</span><input class="input" id="part_time_rate_per_hour" name="part_time_rate_per_hour" type="number" min="0" step="0.01" required></label>
+                        <label class="field"><span>Part-time Fund Cluster</span><select class="select" id="part_time_fund_cluster_id" name="part_time_fund_cluster_id"><option value="">Same as employee fund cluster</option>@foreach($fundClusters as $fund)<option value="{{ $fund->id }}">{{ $fund->code }} - {{ $fund->fund_source_name }}</option>@endforeach</select></label>
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button class="ghost-btn" type="button" data-close-part-time-modal>Cancel</button>
+                    <button class="primary-btn" type="submit"><x-icon name="check" /> Save Part-time Rate</button>
                 </div>
             </form>
         </dialog>
@@ -231,7 +281,7 @@
             'fund_cluster_id',
             'office_id',
             'designation',
-            'employment_type',
+            'status_id',
             'salary_grade',
             'monthly_salary',
             'rate_per_day',
@@ -341,6 +391,37 @@
         document.querySelectorAll('[data-close-employee-modal]').forEach(function (button) {
             button.addEventListener('click', function () {
                 employeeModal.close();
+            });
+        });
+
+        const partTimeModal = document.getElementById('employee-part-time-modal');
+        const partTimeForm = document.getElementById('employee-part-time-form');
+        const partTimeRateInput = document.getElementById('part_time_rate_per_hour');
+        const partTimeFundInput = document.getElementById('part_time_fund_cluster_id');
+
+        document.querySelectorAll('.employee-part-time-button').forEach(function (button) {
+            button.addEventListener('click', function () {
+                partTimeForm.setAttribute('action', button.dataset.partTimeUrl);
+                document.getElementById('part_time_employee_name').textContent = button.dataset.partTimeName || '';
+                partTimeRateInput.value = button.dataset.partTimeRatePerHour || '0.00';
+
+                // Blank means "charge part-time pay to the employee's own fund cluster",
+                // so preselect that fund to show what will actually be used.
+                const fundValue = button.dataset.partTimeFundClusterId || button.dataset.defaultFundClusterId || '';
+
+                if (partTimeFundInput.tomselect) {
+                    partTimeFundInput.tomselect.setValue(fundValue, true);
+                } else {
+                    partTimeFundInput.value = fundValue;
+                }
+
+                partTimeModal.showModal();
+            });
+        });
+
+        document.querySelectorAll('[data-close-part-time-modal]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                partTimeModal.close();
             });
         });
 

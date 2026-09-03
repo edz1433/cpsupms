@@ -9,13 +9,17 @@ use App\Models\FundCluster;
 use App\Models\MissingLogAppeal;
 use App\Models\Office;
 use App\Models\PayrollBatch;
+use App\Models\Status;
 use App\Models\PayrollLine;
 use App\Models\PayrollPeriod;
 use App\Models\PayrollTemplate;
 use App\Models\User;
+use App\Services\AttendanceSummaryService;
 use App\Services\HrisAttendanceDatabaseService;
 use App\Services\HrisDatabaseService;
 use App\Services\HrisEmployeeSyncService;
+use App\Services\PayrollComputationService;
+use App\Services\PayrollEmployeeTypeService;
 use App\Services\PayrollFundTypeService;
 use App\Services\PayrollSignatoryService;
 use Carbon\CarbonImmutable;
@@ -192,7 +196,7 @@ class PayrollWorkflowTest extends TestCase
             'full_name' => 'Roberto Villanueva',
             'campus_id' => $campus->id,
             'designation' => 'Instructor I',
-            'employment_type' => 'Job Order',
+            'status_id' => Status::JOB_ORDER,
         ]);
         $this->assertDatabaseHas('employees', [
             'employee_no' => 'HRIS-EXISTING',
@@ -301,7 +305,7 @@ class PayrollWorkflowTest extends TestCase
                 'q' => 'Registrar',
                 'campus_id' => $mainCampus->id,
                 'fund_cluster_id' => $gaaFund->id,
-                'employment_type' => 'regular',
+                'status_id' => Status::REGULAR,
                 'status' => 'active',
             ]))
             ->assertOk()
@@ -344,7 +348,7 @@ class PayrollWorkflowTest extends TestCase
                 'full_name' => 'Updated Employee',
                 'office_id' => Office::resolveByName('Finance Office')->id,
                 'designation' => 'Payroll Officer',
-                'employment_type' => 'Regular',
+                'status_id' => Status::REGULAR,
                 'salary_grade' => 'SG-12',
                 'monthly_salary' => 42000,
                 'rate_per_day' => 1,
@@ -406,7 +410,7 @@ class PayrollWorkflowTest extends TestCase
                 'full_name' => 'Indirect PhilHealth Employee',
                 'office_id' => Office::resolveByName('Finance Office')->id,
                 'designation' => 'Payroll Assistant',
-                'employment_type' => 'Job Order',
+                'status_id' => Status::JOB_ORDER,
                 'salary_grade' => null,
                 'monthly_salary' => 20000,
                 'rate_per_day' => 0,
@@ -530,13 +534,14 @@ class PayrollWorkflowTest extends TestCase
         $batch = $this->latestBatchFor($employee);
         $line = $batch->lines()->where('employee_id', $employee->id)->firstOrFail();
 
-        $this->assertEquals(1000.00, (float) $line->rate_per_day);
-        $this->assertEquals(125.00, (float) $line->rate_per_hour);
-        $this->assertEquals(2.0833, (float) $line->rate_per_minute);
+        // Regular pay divides by the month's working days: August 2026 has 21 weekdays.
+        $this->assertEquals(1047.62, (float) $line->rate_per_day);
+        $this->assertEquals(130.95, (float) $line->rate_per_hour);
+        $this->assertEquals(2.1825, (float) $line->rate_per_minute);
         $this->assertEquals(1100.00, (float) $line->sss);
         $this->assertEquals(1100.00, (float) $line->philhealth);
         $this->assertEquals(200.00, (float) $line->pagibig);
-        $this->assertEquals(22, $line->computed_columns['working_days']);
+        $this->assertEquals(21, $line->computed_columns['working_days']);
         $this->assertEquals(8, $line->computed_columns['hours_per_day']);
     }
 
@@ -593,7 +598,8 @@ class PayrollWorkflowTest extends TestCase
 
         $response->assertRedirect(route('payroll.index', ['campus' => $campus->id]));
         $this->assertEquals(45, (int) $line->late_minutes);
-        $this->assertEquals(93.75, (float) $line->late_deduction);
+        // 45 late minutes at the August 2026 per-minute rate (22000 / 21 days / 8h / 60).
+        $this->assertEquals(98.21, (float) $line->late_deduction);
         $this->assertStringContainsString('Needs HR Review', $line->missing_log_status);
         $this->assertStringContainsString('missing time-in', $line->missing_log_status);
         $this->assertStringContainsString('missing time-out', $line->missing_log_status);
@@ -1588,6 +1594,336 @@ class PayrollWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_employment_statuses_come_from_the_statuses_table(): void
+    {
+        $this->seed();
+
+        // Fixed reference data - HRIS employees.emp_status stores these ids.
+        $this->assertDatabaseHas('statuses', ['id' => 1, 'status_name' => 'Regular']);
+        $this->assertDatabaseHas('statuses', ['id' => 2, 'status_name' => 'Full-time/Part-time']);
+        $this->assertDatabaseHas('statuses', ['id' => 3, 'status_name' => 'Part-time/Part-time']);
+        $this->assertDatabaseHas('statuses', ['id' => 4, 'status_name' => 'Job Order']);
+        $this->assertSame(4, Status::count());
+
+        // emp_status resolves as an id, and unknown values fall back to Regular.
+        $this->assertSame(Status::JOB_ORDER, Status::resolveFromHrisStatus('4'));
+        $this->assertSame(Status::PARTTIME_PARTTIME, Status::resolveFromHrisStatus(3));
+        $this->assertSame(Status::REGULAR, Status::resolveFromHrisStatus(''));
+        $this->assertSame(Status::REGULAR, Status::resolveFromHrisStatus('999'));
+
+        // Labels shown anywhere in payroll are read from the table, not hardcoded.
+        $options = app(PayrollEmployeeTypeService::class)->options();
+        $this->assertSame('Job Order', $options['job_order']);
+        $this->assertSame('Part-time/Part-time', $options['parttime_parttime']);
+
+        Status::whereKey(Status::JOB_ORDER)->update(['status_name' => 'Job Order (COS)']);
+        $this->assertSame('Job Order (COS)', app(PayrollEmployeeTypeService::class)->options()['job_order']);
+    }
+
+    public function test_employee_status_reads_and_writes_through_the_statuses_table(): void
+    {
+        $this->seed();
+
+        $campus = Campus::where('code', 'Main')->firstOrFail();
+
+        $employee = Employee::create([
+            'campus_id' => $campus->id,
+            'employee_no' => 'STATUS-001',
+            'full_name' => 'Status Employee',
+            'employment_type' => 'Job Order',
+            'monthly_salary' => 18000,
+            'is_active' => true,
+        ]);
+
+        // Written as a label, stored as the status id, read back as the label.
+        $this->assertSame(Status::JOB_ORDER, (int) $employee->status_id);
+        $this->assertSame('Job Order', $employee->employment_type);
+        $this->assertTrue($employee->isJobOrder());
+        $this->assertDatabaseHas('employees', ['employee_no' => 'STATUS-001', 'status_id' => Status::JOB_ORDER]);
+
+        // A raw HRIS code works the same way.
+        $employee->update(['employment_type' => '2']);
+        $this->assertSame(Status::FULLTIME_PARTTIME, (int) $employee->refresh()->status_id);
+        $this->assertSame('Full-time/Part-time', $employee->employment_type);
+        $this->assertFalse($employee->isJobOrder());
+    }
+    public function test_daily_rate_divisor_follows_employment_type_not_the_fund_template(): void
+    {
+        $this->seed();
+
+        $campus = Campus::where('code', 'Main')->firstOrFail();
+        $period = PayrollPeriod::where('name', 'August 1-15, 2026')->firstOrFail();
+        $computation = app(PayrollComputationService::class);
+
+        // August 2026 has 21 weekdays; the month drives the divisor, not the period.
+        $workingDays = $computation->workingDaysInMonth($period);
+        $expected = 0;
+        $cursor = $period->date_from->copy()->startOfMonth();
+
+        while ($cursor->lte($period->date_from->copy()->endOfMonth())) {
+            if (! $cursor->isWeekend()) {
+                $expected++;
+            }
+
+            $cursor = $cursor->addDay();
+        }
+
+        $this->assertSame($expected, $workingDays);
+
+        $make = fn (string $no, string $type) => Employee::create([
+            'campus_id' => $campus->id,
+            'employee_no' => $no,
+            'full_name' => 'Divisor '.$no,
+            'employment_type' => $type,
+            'monthly_salary' => 22000,
+            'is_active' => true,
+        ]);
+
+        // Job Order is always over 22 days, even when the month has more.
+        $this->assertSame(22, $computation->dailyRateDivisor($make('DIV-JO', 'Job Order'), $period));
+
+        // Everything else divides by the month's actual working days.
+        $this->assertSame($workingDays, $computation->dailyRateDivisor($make('DIV-REG', 'Regular'), $period));
+        $this->assertSame($workingDays, $computation->dailyRateDivisor($make('DIV-FTPT', 'Full-time/Part-time'), $period));
+    }
+
+    public function test_job_order_daily_rate_stays_on_twenty_two_days_in_a_longer_month(): void
+    {
+        $this->seed();
+
+        $campus = Campus::where('code', 'Main')->firstOrFail();
+        $computation = app(PayrollComputationService::class);
+
+        // December 2026 has 23 weekdays.
+        $period = PayrollPeriod::create([
+            'name' => 'December 1-15, 2026',
+            'date_from' => '2026-12-01',
+            'date_to' => '2026-12-15',
+            'period_type' => 'semi-monthly',
+        ]);
+
+        $this->assertSame(23, $computation->workingDaysInMonth($period));
+
+        $jobOrder = Employee::create([
+            'campus_id' => $campus->id,
+            'employee_no' => 'DIV-JO-DEC',
+            'full_name' => 'Job Order December',
+            'employment_type' => 'Job Order',
+            'monthly_salary' => 22000,
+            'is_active' => true,
+        ]);
+
+        $regular = Employee::create([
+            'campus_id' => $campus->id,
+            'employee_no' => 'DIV-REG-DEC',
+            'full_name' => 'Regular December',
+            'employment_type' => 'Regular',
+            'monthly_salary' => 23000,
+            'is_active' => true,
+        ]);
+
+        $this->assertSame(22, $computation->dailyRateDivisor($jobOrder, $period));
+        $this->assertSame(23, $computation->dailyRateDivisor($regular, $period));
+
+        $template = PayrollTemplate::where('code', 'MDS')->firstOrFail();
+        $attendance = app(AttendanceSummaryService::class)->summaryFor($jobOrder, $period);
+
+        $jobOrderLine = $computation->computeLine($jobOrder, $period, $template, $attendance);
+        $regularLine = $computation->computeLine($regular, $period, $template, $attendance);
+
+        $this->assertEquals(1000.00, $jobOrderLine['rate_per_day']);
+        $this->assertEquals(1000.00, $regularLine['rate_per_day']);
+        $this->assertSame(22, $jobOrderLine['computed_columns']['working_days']);
+        $this->assertSame(23, $regularLine['computed_columns']['working_days']);
+    }
+    public function test_offices_are_seeded_and_hris_department_ids_resolve_to_office_names(): void
+    {
+        $this->seed();
+
+        // Reference data keeps its original ids because HRIS emp_dept points at them.
+        $this->assertDatabaseHas('offices', ['id' => 28, 'office_name' => "PRESIDENT'S OFFICE"]);
+        $this->assertDatabaseHas('offices', ['id' => 73, 'office_name' => 'MOISES PADILLA CAMPUS']);
+
+        // emp_dept is an id, so it must resolve to the office rather than create one.
+        $this->assertSame(73, Office::resolveFromHrisDepartment('73'));
+        $this->assertSame(28, Office::resolveFromHrisDepartment(28));
+        $this->assertNull(Office::resolveFromHrisDepartment(''));
+        $this->assertNull(Office::resolveFromHrisDepartment('999999'));
+        $this->assertDatabaseMissing('offices', ['office_name' => '73']);
+
+        // Campuses and colleges carry stat = 2 but are still selectable.
+        $this->assertTrue(Office::active()->whereKey(73)->exists());
+        $this->assertSame(70, Office::count());
+    }
+
+    public function test_hris_sync_links_employees_to_offices_by_department_id(): void
+    {
+        $this->seed();
+
+        $user = User::where('email', 'super@cpsu.edu.ph')->firstOrFail();
+        $campus = Campus::where('code', 'Main')->firstOrFail();
+
+        $this->mock(HrisDatabaseService::class, function (MockInterface $mock) use ($campus) {
+            $mock->shouldReceive('employees')->once()->andReturn([
+                'status' => 'connected',
+                'data' => ['data' => [[
+                    'emp_ID' => 'DEPT-001',
+                    'name' => 'Department Linked Employee',
+                    'position' => 'Instructor I',
+                    'emp_dept' => '73',
+                    'emp_status' => '1',
+                    'camp_id' => $campus->id,
+                ]]],
+            ]);
+        });
+
+        $this->actingAs($user)->post(route('employees.sync-hris'))->assertRedirect();
+
+        $employee = Employee::where('employee_no', 'DEPT-001')->firstOrFail();
+
+        $this->assertSame(73, $employee->office_id);
+        $this->assertSame('MOISES PADILLA CAMPUS', $employee->office_name);
+        $this->assertDatabaseMissing('offices', ['office_name' => '73']);
+    }
+    public function test_part_time_rate_can_be_set_from_the_employees_list(): void
+    {
+        $this->seed();
+
+        $user = User::where('email', 'super@cpsu.edu.ph')->firstOrFail();
+        $campus = Campus::where('code', 'Main')->firstOrFail();
+        $employeeFund = FundCluster::where('fund_source_name', 'GAA')->firstOrFail();
+        $partTimeFund = FundCluster::where('code', 'PT')->where('fund_source_name', 'PT')->firstOrFail();
+
+        $employee = Employee::create([
+            'campus_id' => $campus->id,
+            'fund_cluster_id' => $employeeFund->id,
+            'employee_no' => 'PT-SET-001',
+            'full_name' => 'Dual Post Employee',
+            'employment_type' => 'regular',
+            'monthly_salary' => 30000,
+            'is_active' => true,
+        ]);
+
+        $this->assertFalse($employee->hasPartTimeAssignment());
+
+        $this->actingAs($user)
+            ->put(route('employees.part-time.update', $employee), [
+                'part_time_rate_per_hour' => 185.50,
+                'part_time_fund_cluster_id' => $partTimeFund->id,
+            ])
+            ->assertRedirect();
+
+        $employee->refresh();
+
+        $this->assertTrue($employee->hasPartTimeAssignment());
+        $this->assertEquals(185.50, (float) $employee->part_time_rate_per_hour);
+        $this->assertSame($partTimeFund->id, $employee->part_time_fund_cluster_id);
+
+        // Clearing the rate takes the employee back off the part-time payroll.
+        $this->actingAs($user)
+            ->put(route('employees.part-time.update', $employee), [
+                'part_time_rate_per_hour' => 0,
+                'part_time_fund_cluster_id' => null,
+            ])
+            ->assertRedirect();
+
+        $this->assertFalse($employee->refresh()->hasPartTimeAssignment());
+    }
+
+    public function test_part_time_fund_cluster_defaults_to_the_employee_fund_cluster(): void
+    {
+        $this->seed();
+
+        $campus = Campus::where('code', 'Main')->firstOrFail();
+        $employeeFund = FundCluster::where('fund_source_name', 'GAA')->firstOrFail();
+
+        $employee = Employee::create([
+            'campus_id' => $campus->id,
+            'fund_cluster_id' => $employeeFund->id,
+            'employee_no' => 'PT-DEFAULT-001',
+            'full_name' => 'Default Fund Employee',
+            'employment_type' => 'regular',
+            'monthly_salary' => 30000,
+            'part_time_rate_per_hour' => 120,
+            'is_active' => true,
+        ]);
+
+        $this->assertSame($employeeFund->id, $employee->partTimeFundClusterOrDefault()?->id);
+    }
+
+    public function test_part_time_rate_puts_a_regular_employee_on_the_part_time_payroll(): void
+    {
+        $this->seed();
+
+        $user = User::where('email', 'super@cpsu.edu.ph')->firstOrFail();
+        $campus = Campus::where('code', 'Main')->firstOrFail();
+        $period = PayrollPeriod::where('name', 'August 1-15, 2026')->firstOrFail();
+        $employeeFund = FundCluster::where('fund_source_name', 'GAA')->firstOrFail();
+        $partTimeFund = FundCluster::where('code', 'PT')->where('fund_source_name', 'PT')->firstOrFail();
+
+        // Regular employee who also holds a part-time post - one record, not two.
+        $dualPost = Employee::create([
+            'campus_id' => $campus->id,
+            'fund_cluster_id' => $employeeFund->id,
+            'employee_no' => 'PT-DUAL-001',
+            'full_name' => 'Dual Post Employee',
+            'employment_type' => 'regular',
+            'monthly_salary' => 30000,
+            'part_time_rate_per_hour' => 200,
+            'part_time_fund_cluster_id' => $partTimeFund->id,
+            'is_active' => true,
+        ]);
+
+        $regularOnly = Employee::create([
+            'campus_id' => $campus->id,
+            'fund_cluster_id' => $employeeFund->id,
+            'employee_no' => 'PT-REGULAR-001',
+            'full_name' => 'Regular Only Employee',
+            'employment_type' => 'regular',
+            'monthly_salary' => 28000,
+            'is_active' => true,
+        ]);
+
+        $this->mockHrisAttendance(['status' => 'success', 'data' => []]);
+
+        $this->actingAs($user)->post(route('payroll.store'), [
+            'campus_id' => $campus->id,
+            'payroll_period_id' => $period->id,
+            'payroll_employee_type' => 'parttime_parttime',
+            'remarks' => 'Part-time generation',
+            'signatories' => $this->signatoriesFor($campus),
+        ])->assertRedirect();
+
+        $line = PayrollLine::where('employee_id', $dualPost->id)->firstOrFail();
+        $batch = PayrollBatch::findOrFail($line->payroll_batch_id);
+
+        // Charged to the chosen part-time fund, not the employee's regular fund.
+        $this->assertSame($partTimeFund->id, $batch->fund_cluster_id);
+        $this->assertTrue($line->computed_columns['part_time']);
+        $this->assertEquals(200.0, (float) $line->rate_per_hour);
+        $this->assertEquals(0.0, (float) $line->monthly_salary);
+
+        // Paid hourly for the hours actually rendered.
+        $template = $batch->template;
+        $expectedHours = $line->rendered_days * $template->hours_per_day;
+        $this->assertEquals(round(200 * $expectedHours, 2), (float) $line->gross_income);
+        $this->assertEquals($expectedHours, $line->computed_columns['hours_rendered']);
+
+        // Statutory deductions stay on the regular payroll line only.
+        $this->assertEquals(0.0, (float) $line->tax_amount);
+        $this->assertEquals(0.0, (float) $line->sss);
+        $this->assertEquals(0.0, (float) $line->philhealth);
+        $this->assertEquals(0.0, (float) $line->pagibig);
+        $this->assertEquals(0.0, (float) $line->total_deduction);
+        $this->assertEquals((float) $line->earned_for_period, (float) $line->net_amount_received);
+        $this->assertStringContainsString('Part-time', (string) $line->remarks);
+
+        // A regular employee with no part-time rate is not pulled into this run.
+        $this->assertDatabaseMissing('payroll_lines', ['employee_id' => $regularOnly->id]);
+
+        // And the employee is only paid once in the run.
+        $this->assertSame(1, PayrollLine::where('employee_id', $dualPost->id)->count());
+    }
     public function test_one_generation_run_creates_a_draft_for_every_fund_with_employees(): void
     {
         $this->seed();

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Status;
 use Illuminate\Database\Eloquent\Builder;
 
 class PayrollEmployeeTypeService
@@ -14,6 +15,21 @@ class PayrollEmployeeTypeService
 
     public const JOB_ORDER = 'job_order';
 
+    /**
+     * The payroll run vocabulary maps one-to-one onto the statuses table, whose ids are
+     * also the HRIS emp_status codes.
+     */
+    public const STATUS_IDS = [
+        self::REGULAR => Status::REGULAR,
+        self::FULLTIME_PARTTIME => Status::FULLTIME_PARTTIME,
+        self::PARTTIME_PARTTIME => Status::PARTTIME_PARTTIME,
+        self::JOB_ORDER => Status::JOB_ORDER,
+    ];
+
+    /**
+     * Fallback labels used only before the statuses table has been seeded. The table is
+     * the source of truth once it has rows.
+     */
     public const TYPES = [
         self::REGULAR => 'Regular',
         self::FULLTIME_PARTTIME => 'Full-time/Part-time',
@@ -21,74 +37,77 @@ class PayrollEmployeeTypeService
         self::JOB_ORDER => 'Job Order',
     ];
 
-    private const MATCHES = [
-        self::REGULAR => ['1', 'regular', 'permanent', 'full time', 'full-time', 'fulltime', 'plantilla'],
-        self::FULLTIME_PARTTIME => ['2', 'full-time/part-time', 'fulltime/parttime', 'full-time part-time', 'fulltime parttime', 'fulltime-parttime', 'full-time/parttime', 'fulltime/part-time'],
-        self::PARTTIME_PARTTIME => ['3', 'part-time/part-time', 'parttime/parttime', 'part-time part-time', 'parttime parttime', 'parttime-parttime', 'partime/partime', 'part-time/part-tiem'],
-        self::JOB_ORDER => ['4', 'job order', 'job-order', 'jo', 'j.o.', 'contractual', 'contract of service', 'cos'],
-    ];
+    private ?array $labelsByStatusId = null;
 
+    /**
+     * Slug => label, with labels read from the statuses table.
+     */
     public function options(): array
     {
-        return self::TYPES;
+        $labels = $this->labelsByStatusId();
+
+        $options = [];
+
+        foreach (self::STATUS_IDS as $key => $statusId) {
+            $options[$key] = $labels[$statusId] ?? self::TYPES[$key];
+        }
+
+        return $options;
+    }
+
+    /**
+     * Every status row, for pickers that should show exactly what the table holds.
+     */
+    public function statuses()
+    {
+        return Status::query()->orderBy('id')->get();
     }
 
     public function label(?string $type): string
     {
-        return self::TYPES[$type] ?? self::TYPES[self::REGULAR];
+        return $this->options()[$type] ?? $this->options()[self::REGULAR];
     }
 
+    public function statusId(?string $type): int
+    {
+        return self::STATUS_IDS[$type] ?? Status::REGULAR;
+    }
+
+    /**
+     * Turn a status id, slug or any known label into its display label.
+     */
     public function normalize(mixed $value): string
     {
-        if (array_key_exists((string) $value, self::TYPES)) {
-            return self::TYPES[(string) $value];
+        $labels = $this->labelsByStatusId();
+
+        if (is_string($value) && array_key_exists($value, self::STATUS_IDS)) {
+            return $labels[self::STATUS_IDS[$value]] ?? self::TYPES[$value];
         }
 
-        $normalized = $this->normalizeText($value);
+        $statusId = Status::resolveFromHrisStatus($value);
 
-        foreach (self::MATCHES as $key => $matches) {
-            if (in_array($normalized, $matches, true)) {
-                return self::TYPES[$key];
-            }
-        }
-
-        if (array_key_exists($normalized, self::TYPES)) {
-            return self::TYPES[$normalized];
-        }
-
-        return self::TYPES[self::REGULAR];
+        return $labels[$statusId] ?? self::TYPES[self::REGULAR];
     }
 
     public function apply(Builder $query, ?string $type): Builder
     {
-        $key = array_key_exists((string) $type, self::TYPES)
-            ? (string) $type
-            : $this->keyForLabel($type);
-        $matches = self::MATCHES[$key] ?? self::MATCHES[self::REGULAR];
-        $matches[] = $this->normalizeText(self::TYPES[$key] ?? self::TYPES[self::REGULAR]);
-
-        return $query->where(function (Builder $query) use ($matches) {
-            foreach ($matches as $match) {
-                $query->orWhereRaw('LOWER(TRIM(employment_type)) = ?', [$match]);
-            }
-        });
+        return $query->where('status_id', $this->keyToStatusId($type));
     }
 
-    private function keyForLabel(mixed $label): string
+    private function keyToStatusId(?string $type): int
     {
-        $normalized = $this->normalizeText($label);
-
-        foreach (self::TYPES as $key => $typeLabel) {
-            if ($this->normalizeText($typeLabel) === $normalized) {
-                return $key;
-            }
+        if (is_string($type) && array_key_exists($type, self::STATUS_IDS)) {
+            return self::STATUS_IDS[$type];
         }
 
-        return self::REGULAR;
+        return Status::resolveFromHrisStatus($type);
     }
 
-    private function normalizeText(mixed $value): string
+    private function labelsByStatusId(): array
     {
-        return strtolower(trim(preg_replace('/\s+/', ' ', str_replace(['_', '\\'], ['-', '/'], (string) $value))));
+        return $this->labelsByStatusId ??= Status::query()
+            ->pluck('status_name', 'id')
+            ->map(fn ($name) => (string) $name)
+            ->all();
     }
 }

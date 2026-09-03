@@ -57,6 +57,16 @@ class PayrollFundTypeService
         return $type !== null && $fundsByType->has($type) ? $type : self::FALLBACK_TYPE;
     }
 
+    /**
+     * Part-time pay can be charged to a different fund than the employee's regular
+     * salary, falling back to their own fund cluster when none was chosen.
+     */
+    public function typeForPartTimeEmployee(Employee $employee, SupportCollection $fundsByType): string
+    {
+        $type = $employee->partTimeFundClusterOrDefault()?->payroll_template_type;
+
+        return $type !== null && $fundsByType->has($type) ? $type : self::FALLBACK_TYPE;
+    }
     public function ensureMainFundClusters(): void
     {
         foreach (self::TYPES as $index => $type) {

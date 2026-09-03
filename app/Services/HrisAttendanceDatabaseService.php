@@ -75,7 +75,7 @@ class HrisAttendanceDatabaseService
 
             $dtrs = DB::connection('hris')
                 ->table('dtrs')
-                ->select(['emp_ID', 'date', 'time_in', 'time_out', 'time_over'])
+                ->select(['id', 'emp_ID', 'date', 'time_in', 'time_out', 'time_over'])
                 ->whereIn('emp_ID', $eligibleEmployeeIds)
                 ->whereBetween('date', [$dateFrom->toDateString(), $dateTo->toDateString()])
                 ->orderBy('emp_ID')
@@ -130,6 +130,7 @@ class HrisAttendanceDatabaseService
         $summary = [
             'total_late_minutes' => 0,
             'total_undertime_minutes' => 0,
+            'total_deductible_minutes' => 0,
             'review_days' => 0,
         ];
 
@@ -139,7 +140,8 @@ class HrisAttendanceDatabaseService
                 $day = $this->attendanceDay($date, $dateRecords, $officialTime);
                 $summary['total_late_minutes'] += $day['late_minutes'];
                 $summary['total_undertime_minutes'] += $day['undertime_minutes'];
-                $summary['review_days'] += ($day['time_in_review'] || $day['time_out_review']) ? 1 : 0;
+                $summary['total_deductible_minutes'] += $day['deductible_minutes'];
+                $summary['review_days'] += $day['review_required'] ? 1 : 0;
 
                 return $day;
             })
@@ -157,33 +159,88 @@ class HrisAttendanceDatabaseService
     private function attendanceDay(string $date, Collection $records, ?object $officialTime): array
     {
         $schedule = $this->scheduleForDate($officialTime, CarbonImmutable::parse($date));
-        $timeIns = $this->times($records->pluck('time_in'))
+
+        // HRIS has no unique key on (emp_ID, date). Merging duplicate rows would let a
+        // stray punch change the arranged day, so the newest row wins and the day is
+        // flagged for a person to confirm rather than silently combined.
+        $ordered = $records->sortBy(fn (object $record) => (int) ($record->id ?? 0))->values();
+        $record = $ordered->last();
+        $duplicated = $ordered->count() > 1;
+
+        $timeIns = $this->times(collect([$record->time_in ?? null]));
+        $timeOuts = $this->times(collect([$record->time_out ?? null]));
+        $overtime = $this->times(collect([$record->time_over ?? null]));
+
+        $usableIns = $timeIns
             ->filter(fn (string $time) => $this->minutes($time) <= $this->minutes($schedule['afternoon_in']) + 30)
             ->values();
-        $timeOuts = $this->times($records->pluck('time_out'))
+        $usableOuts = $timeOuts
             ->filter(fn (string $time) => $this->minutes($time) >= $this->minutes($schedule['morning_out']) - 60)
             ->values();
-        $overtime = $this->times($records->pluck('time_over'))->values();
-        $completeTimeIns = $timeIns->count() >= 2;
-        $completeTimeOuts = $timeOuts->count() >= 2;
-        $amIn = $timeIns->first();
-        $amOut = $timeOuts->first();
-        $pmIn = $completeTimeIns ? $timeIns->last() : null;
-        $pmOut = $completeTimeOuts ? $timeOuts->last() : null;
 
-        $lateMinutes = $completeTimeIns
-            ? $this->minutesAfter($amIn, $schedule['morning_in']) + $this->minutesAfter($pmIn, $schedule['afternoon_in'])
-            : 0;
-        $undertimeMinutes = $completeTimeOuts
-            ? $this->minutesBefore($amOut, $schedule['morning_out']) + $this->minutesBefore($pmOut, $schedule['afternoon_out'])
-            : 0;
+        // The two sides are judged independently: an incomplete IN side must not erase
+        // valid undertime, and an incomplete OUT side must not erase valid late.
+        $completeIns = $usableIns->count() >= 2;
+        $completeOuts = $usableOuts->count() >= 2;
+
+        $amIn = $usableIns->first();
+        $pmIn = $completeIns ? $usableIns->last() : null;
+        $amOut = $usableOuts->first();
+        $pmOut = $completeOuts ? $usableOuts->last() : null;
+
+        $morningLate = $completeIns ? $this->minutesAfter($amIn, $schedule['morning_in']) : 0;
+        $afternoonLate = $completeIns ? $this->minutesAfter($pmIn, $schedule['afternoon_in']) : 0;
+        $morningUndertime = $completeOuts ? $this->minutesBefore($amOut, $schedule['morning_out']) : 0;
+        $afternoonUndertime = $completeOuts ? $this->minutesBefore($pmOut, $schedule['afternoon_out']) : 0;
+
+        $lateMinutes = $morningLate + $afternoonLate;
+        $undertimeMinutes = $morningUndertime + $afternoonUndertime;
+
+        $reviewReasons = [];
+
+        if (! $completeIns) {
+            $reviewReasons[] = 'missing_time_in';
+        }
+
+        if (! $completeOuts) {
+            $reviewReasons[] = 'missing_time_out';
+        }
+
+        if ($duplicated) {
+            $reviewReasons[] = 'duplicate_dtr_rows';
+        }
 
         return [
             'date' => $date,
-            'time_in_review' => ! $completeTimeIns,
-            'time_out_review' => ! $completeTimeOuts,
+            'schedule' => [
+                'morning_start' => $schedule['morning_in'],
+                'morning_end' => $schedule['morning_out'],
+                'afternoon_start' => $schedule['afternoon_in'],
+                'afternoon_end' => $schedule['afternoon_out'],
+            ],
+            'dtr_id' => isset($record->id) ? (int) $record->id : null,
+            'dtr_ids' => $ordered->map(fn (object $row) => (int) ($row->id ?? 0))->all(),
+            'duplicate_dtr_rows' => $duplicated,
+            'raw_time_in' => $record->time_in ?? null,
+            'raw_time_out' => $record->time_out ?? null,
+            'raw_time_over' => $record->time_over ?? null,
+            'normalized_time_ins' => $timeIns->all(),
+            'normalized_time_outs' => $timeOuts->all(),
+            'normalized_time_overs' => $overtime->all(),
+            'usable_time_in_count' => $usableIns->count(),
+            'usable_time_out_count' => $usableOuts->count(),
+            'time_in_review' => ! $completeIns,
+            'time_out_review' => ! $completeOuts,
+            'review_required' => $reviewReasons !== [],
+            'review_reasons' => $reviewReasons,
+            'morning_late_minutes' => $morningLate,
+            'afternoon_late_minutes' => $afternoonLate,
+            'morning_undertime_minutes' => $morningUndertime,
+            'afternoon_undertime_minutes' => $afternoonUndertime,
             'late_minutes' => $lateMinutes,
             'undertime_minutes' => $undertimeMinutes,
+            'deductible_minutes' => $lateMinutes + $undertimeMinutes,
+            'timeline' => $this->timeline($timeIns, $timeOuts, $overtime),
             'times' => [
                 'am_in' => $amIn,
                 'am_out' => $amOut,
@@ -193,6 +250,20 @@ class HrisAttendanceDatabaseService
                 'ot_out' => $overtime->count() >= 2 ? $overtime->last() : null,
             ],
         ];
+    }
+
+    /**
+     * One chronological list of every punch for the day. Overtime appears here for the
+     * reviewer but is never part of late or undertime.
+     */
+    private function timeline(Collection $timeIns, Collection $timeOuts, Collection $overtime): array
+    {
+        return $timeIns->map(fn (string $time) => ['time' => $time, 'type' => 'IN'])
+            ->concat($timeOuts->map(fn (string $time) => ['time' => $time, 'type' => 'OUT']))
+            ->concat($overtime->map(fn (string $time) => ['time' => $time, 'type' => 'OT']))
+            ->sortBy(fn (array $entry) => $this->minutes($entry['time']))
+            ->values()
+            ->all();
     }
 
     private function scheduleForDate(?object $officialTime, CarbonImmutable $date): array
@@ -250,15 +321,32 @@ class HrisAttendanceDatabaseService
             return null;
         }
 
-        try {
-            return CarbonImmutable::parse(trim((string) $time))->format('H:i');
-        } catch (\Throwable) {
-            if (preg_match('/\b(\d{1,2}):(\d{2})\b/', (string) $time, $matches)) {
-                return sprintf('%02d:%02d', (int) $matches[1], (int) $matches[2]);
-            }
+        $value = trim((string) $time);
 
+        // Only a real clock value is trusted. Carbon turns stray text into "now", which
+        // would silently become a punch or a schedule boundary and corrupt the day.
+        if (! preg_match('/^(\d{1,2}):(\d{2})(?::\d{2})?(?:\.\d+)?\s*([AaPp])?\.?[Mm]?\.?$/', $value, $matches)) {
             return null;
         }
+
+        $hours = (int) $matches[1];
+        $minutes = (int) $matches[2];
+        $meridiem = strtolower($matches[3] ?? '');
+
+        if ($meridiem === 'p' && $hours < 12) {
+            $hours += 12;
+        }
+
+        if ($meridiem === 'a' && $hours === 12) {
+            $hours = 0;
+        }
+
+        if ($hours > 23 || $minutes > 59) {
+            return null;
+        }
+
+        // Seconds and milliseconds are dropped, never rounded up.
+        return sprintf('%02d:%02d', $hours, $minutes);
     }
 
     private function minutes(?string $time): int

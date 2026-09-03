@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Campus;
 use App\Models\Employee;
 use App\Models\Office;
+use App\Models\Status;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
@@ -66,9 +67,9 @@ class HrisEmployeeSyncService
                     'campus_id' => $campusId,
                     'fund_cluster_id' => $employee->fund_cluster_id,
                     'full_name' => $this->nameFromHris($row),
-                    'office_id' => Office::resolveByName($row['emp_dept'] ?? null)?->id,
+                    'office_id' => Office::resolveFromHrisDepartment($row['emp_dept'] ?? null),
                     'designation' => $row['position'] ?? null,
-                    'employment_type' => $this->employeeTypes->normalize($row['emp_status'] ?? PayrollEmployeeTypeService::REGULAR),
+                    'status_id' => Status::resolveFromHrisStatus($row['emp_status'] ?? null),
                     'monthly_salary' => $employee->monthly_salary ?: 0,
                     'rate_per_day' => $employee->rate_per_day ?: 0,
                     'rate_per_hour' => $employee->rate_per_hour ?: 0,

@@ -28,9 +28,14 @@ class Office extends Model
         return $this->hasMany(Employee::class);
     }
 
+    /**
+     * stat is a category rather than a plain on/off flag: 1 marks administrative
+     * offices and 2 the colleges and campuses, both of which are live. Only 0 is
+     * treated as retired.
+     */
     public function scopeActive(Builder $query): Builder
     {
-        return $query->where('stat', 1);
+        return $query->where('stat', '>', 0);
     }
 
     /**
@@ -49,6 +54,25 @@ class Office extends Model
             ['office_name' => $name],
             ['office_abbr' => static::abbreviate($name), 'group_by' => 0, 'stat' => 1],
         );
+    }
+
+    /**
+     * HRIS stores employees.emp_dept as the office id, so a numeric value is a direct
+     * reference. Only a non-numeric value is treated as a name to look up or create.
+     */
+    public static function resolveFromHrisDepartment(mixed $value): ?int
+    {
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            return null;
+        }
+
+        if (ctype_digit($value)) {
+            return static::whereKey((int) $value)->value('id');
+        }
+
+        return static::resolveByName($value)?->id;
     }
 
     public static function abbreviate(string $name): string

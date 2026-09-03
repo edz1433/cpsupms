@@ -6,6 +6,7 @@ use App\Models\Campus;
 use App\Models\Employee;
 use App\Models\FundCluster;
 use App\Models\Office;
+use App\Models\Status;
 use App\Services\AuditLogger;
 use App\Services\HrisEmployeeSyncService;
 use App\Services\PayrollEmployeeTypeService;
@@ -22,7 +23,7 @@ class EmployeeController extends Controller
             'q' => ['nullable', 'string', 'max:120'],
             'campus_id' => ['nullable', 'integer', Rule::exists('campuses', 'id')->where('is_active', true)],
             'fund_cluster_id' => ['nullable', 'integer', Rule::exists('fund_clusters', 'id')->where('is_active', true)],
-            'employment_type' => ['nullable', Rule::in(array_keys(PayrollEmployeeTypeService::TYPES))],
+            'status_id' => ['nullable', 'integer', Rule::exists('statuses', 'id')],
             'status' => ['nullable', Rule::in(['active', 'inactive', 'all'])],
         ]);
         $filters['q'] = trim($filters['q'] ?? '');
@@ -52,7 +53,7 @@ class EmployeeController extends Controller
 
         $baseQuery = Employee::query()->visibleTo($user);
         $employees = (clone $baseQuery)
-            ->with(['campus', 'fundCluster', 'office'])
+            ->with(['campus', 'fundCluster', 'office', 'status'])
             ->when($filters['q'] !== '', function ($query) use ($filters) {
                 $search = $filters['q'];
 
@@ -63,7 +64,8 @@ class EmployeeController extends Controller
                             ->where('office_name', 'like', "%{$search}%")
                             ->orWhere('office_abbr', 'like', "%{$search}%"))
                         ->orWhere('designation', 'like', "%{$search}%")
-                        ->orWhere('employment_type', 'like', "%{$search}%")
+                        ->orWhereHas('status', fn ($statusQuery) => $statusQuery
+                            ->where('status_name', 'like', "%{$search}%"))
                         ->orWhere('salary_grade', 'like', "%{$search}%")
                         ->orWhereHas('campus', fn ($campusQuery) => $campusQuery
                             ->where('name', 'like', "%{$search}%")
@@ -75,7 +77,7 @@ class EmployeeController extends Controller
             })
             ->when(! empty($filters['campus_id']), fn ($query) => $query->where('campus_id', $filters['campus_id']))
             ->when(! empty($filters['fund_cluster_id']), fn ($query) => $query->where('fund_cluster_id', $filters['fund_cluster_id']))
-            ->when(! empty($filters['employment_type']), fn ($query) => $employeeTypes->apply($query, $filters['employment_type']))
+            ->when(! empty($filters['status_id']), fn ($query) => $query->where('status_id', $filters['status_id']))
             ->when($filters['status'] !== 'all', fn ($query) => $query->where('is_active', $filters['status'] === 'active'))
             ->orderBy('full_name')
             ->paginate(20)
@@ -86,7 +88,7 @@ class EmployeeController extends Controller
             'campuses' => $campuses,
             'fundClusters' => $fundClusters,
             'offices' => $offices,
-            'employmentTypes' => $employeeTypes->options(),
+            'statuses' => $employeeTypes->statuses(),
             'filters' => $filters,
             'totalEmployees' => (clone $baseQuery)->count(),
         ]);
@@ -103,9 +105,9 @@ class EmployeeController extends Controller
             'campus_id' => ['required', Rule::exists('campuses', 'id')->where('is_active', true)],
             'fund_cluster_id' => ['nullable', Rule::exists('fund_clusters', 'id')->where('is_active', true)],
             'full_name' => ['required', 'string', 'max:255'],
-            'office_id' => ['nullable', Rule::exists('offices', 'id')->where('stat', 1)],
+            'office_id' => ['nullable', Rule::exists('offices', 'id')->whereNot('stat', 0)],
             'designation' => ['nullable', 'string', 'max:255'],
-            'employment_type' => ['required', Rule::in(array_values(PayrollEmployeeTypeService::TYPES))],
+            'status_id' => ['required', 'integer', Rule::exists('statuses', 'id')],
             'salary_grade' => ['nullable', 'string', 'max:50'],
             'monthly_salary' => ['required', 'numeric', 'min:0', 'max:999999999.99'],
             'rate_per_day' => ['nullable', 'numeric', 'min:0', 'max:999999999.99'],
@@ -131,7 +133,6 @@ class EmployeeController extends Controller
         }
 
         $validated = array_merge($validated, $this->ratesFromMonthlySalary((float) $validated['monthly_salary']));
-        $validated['employment_type'] = $employeeTypes->normalize($validated['employment_type']);
         $validated['is_active'] = $request->boolean('is_active');
 
         $employee->fill($validated);
@@ -146,6 +147,39 @@ class EmployeeController extends Controller
         return back()->with('status', 'Employee payroll record updated.');
     }
 
+    /**
+     * An employee who also holds a part-time post keeps a single record: an hourly rate
+     * above zero puts them on the Part-time/Part-time payroll, charged to the fund
+     * cluster chosen here or to their own fund cluster when none is picked.
+     */
+    public function updatePartTime(Request $request, Employee $employee, AuditLogger $audit)
+    {
+        $user = $request->user();
+
+        abort_unless($user->canManagePayroll(), 403);
+        abort_unless($user->isUniversityWide() || (int) $employee->campus_id === (int) $user->campus_id, 403);
+
+        $validated = $request->validate([
+            'part_time_rate_per_hour' => ['required', 'numeric', 'min:0', 'max:999999.99'],
+            'part_time_fund_cluster_id' => ['nullable', Rule::exists('fund_clusters', 'id')->where('is_active', true)],
+        ]);
+
+        $employee->fill([
+            'part_time_rate_per_hour' => $validated['part_time_rate_per_hour'],
+            'part_time_fund_cluster_id' => $validated['part_time_fund_cluster_id'] ?: null,
+        ])->save();
+
+        $audit->record('employees.part_time_updated', $user, $employee, 'Employee part-time rate updated.', [
+            'campus_id' => $employee->campus_id,
+            'employee_no' => $employee->employee_no,
+            'part_time_rate_per_hour' => (float) $employee->part_time_rate_per_hour,
+            'part_time_fund_cluster_id' => $employee->part_time_fund_cluster_id,
+        ]);
+
+        return back()->with('status', $employee->hasPartTimeAssignment()
+            ? 'Part-time rate saved. This employee is now included in the Part-time/Part-time payroll.'
+            : 'Part-time rate cleared. This employee is no longer on the Part-time/Part-time payroll.');
+    }
     public function syncFromHris(Request $request, HrisEmployeeSyncService $sync)
     {
         $user = $request->user();

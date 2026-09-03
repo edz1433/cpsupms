@@ -393,6 +393,41 @@
                 };
             }
 
+            /**
+             * Every punch HRIS recorded for the date, including ones too far outside the
+             * schedule to be used. Without this a blank cell is ambiguous: it could mean
+             * no punch at all, or a punch that could not be matched to a half-day.
+             */
+            function punchEvidence(item) {
+                const wrap = document.createElement('div');
+                wrap.className = 'review-day-punches';
+
+                const timeline = Array.isArray(item.timeline) ? item.timeline : [];
+
+                if (timeline.length === 0) {
+                    wrap.classList.add('is-empty');
+                    wrap.textContent = hasTime(item)
+                        ? 'Punch list unavailable for this date.'
+                        : 'No DTR punch recorded for this date.';
+
+                    return wrap;
+                }
+
+                const label = document.createElement('span');
+                label.className = 'review-day-punches-label';
+                label.textContent = 'HRIS punches';
+                wrap.appendChild(label);
+
+                timeline.forEach(function (entry) {
+                    const chip = document.createElement('span');
+                    chip.className = 'review-punch review-punch-' + String(entry.type || '').toLowerCase();
+                    chip.textContent = displayTime(entry.time) + ' ' + (entry.type || '');
+                    wrap.appendChild(chip);
+                });
+
+                return wrap;
+            }
+
             function hasIssue(item, needle) {
                 return (item.issues || []).some(function (issue) {
                     return String(issue).toLowerCase().includes(needle);
@@ -489,6 +524,7 @@
                 });
 
                 review.appendChild(issues);
+                review.appendChild(punchEvidence(item));
 
                 if (hasIssues) {
                     const fields = document.createElement('div');
@@ -503,12 +539,17 @@
                     review.appendChild(fields);
                 }
 
+                // Flag only the punch that is actually absent. A captured time is shown
+                // as-is, even when the other half of the same day is missing.
+                const inMissing = hasIssue(item, 'missing time-in');
+                const outMissing = hasIssue(item, 'missing time-out');
+
                 row.append(
                     date,
-                    dtrCell(times.am_in, hasIssue(item, 'missing time-in')),
-                    dtrCell(times.am_out, false),
-                    dtrCell(times.pm_in, false),
-                    dtrCell(times.pm_out, hasIssue(item, 'missing time-out')),
+                    dtrCell(times.am_in, inMissing && !times.am_in),
+                    dtrCell(times.am_out, outMissing && !times.am_out),
+                    dtrCell(times.pm_in, inMissing && !times.pm_in),
+                    dtrCell(times.pm_out, outMissing && !times.pm_out),
                     dtrCell(times.ot_in, false),
                     dtrCell(times.ot_out, false),
                     review
@@ -551,7 +592,9 @@
                 }
 
                 if (reviewNote) {
-                    reviewNote.hidden = items.some(hasTime);
+                    reviewNote.hidden = items.some(function (item) {
+                        return hasTime(item) || (Array.isArray(item.timeline) && item.timeline.length > 0);
+                    });
                 }
 
                 if (reviewForm) {

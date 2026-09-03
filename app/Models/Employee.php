@@ -15,11 +15,14 @@ class Employee extends Model
         'full_name',
         'designation',
         'employment_type',
+        'status_id',
         'salary_grade',
         'monthly_salary',
         'rate_per_day',
         'rate_per_hour',
         'rate_per_minute',
+        'part_time_rate_per_hour',
+        'part_time_fund_cluster_id',
         'tax_rate',
         'tax_status',
         'bir_sworn_status',
@@ -38,6 +41,7 @@ class Employee extends Model
         'rate_per_day' => 'decimal:2',
         'rate_per_hour' => 'decimal:2',
         'rate_per_minute' => 'decimal:4',
+        'part_time_rate_per_hour' => 'decimal:2',
         'tax_rate' => 'decimal:4',
         'is_active' => 'boolean',
         'last_synced_at' => 'datetime',
@@ -53,9 +57,42 @@ class Employee extends Model
         return $this->belongsTo(FundCluster::class);
     }
 
+    public function partTimeFundCluster()
+    {
+        return $this->belongsTo(FundCluster::class, 'part_time_fund_cluster_id');
+    }
+
+    public function status()
+    {
+        return $this->belongsTo(Status::class);
+    }
+
     public function office()
     {
         return $this->belongsTo(Office::class);
+    }
+
+    /**
+     * Employment status label, read through the statuses table so exports, payroll
+     * computation and views keep working with a plain string.
+     */
+    public function getEmploymentTypeAttribute(): string
+    {
+        return $this->status?->status_name ?? 'Regular';
+    }
+
+    /**
+     * Accepts a status id or any known label, so HRIS sync and existing callers can
+     * set the status without resolving the row themselves.
+     */
+    public function setEmploymentTypeAttribute(mixed $value): void
+    {
+        $this->attributes['status_id'] = Status::resolveFromHrisStatus($value);
+    }
+
+    public function isJobOrder(): bool
+    {
+        return (int) $this->status_id === Status::JOB_ORDER;
     }
 
     /**
@@ -65,6 +102,24 @@ class Employee extends Model
     public function getOfficeNameAttribute(): ?string
     {
         return $this->office?->office_name;
+    }
+
+    /**
+     * A part-time hourly rate above zero is what marks an employee as also holding
+     * a part-time post, so no duplicate employee record is needed for one.
+     */
+    public function hasPartTimeAssignment(): bool
+    {
+        return (float) $this->part_time_rate_per_hour > 0;
+    }
+
+    /**
+     * Part-time pay falls back to the employee's own fund cluster unless a separate
+     * one was chosen for the part-time post.
+     */
+    public function partTimeFundClusterOrDefault(): ?FundCluster
+    {
+        return $this->partTimeFundCluster ?: $this->fundCluster;
     }
 
     public function scopeVisibleTo(Builder $query, User $user): Builder

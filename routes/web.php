@@ -33,6 +33,7 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/employees', [EmployeeController::class, 'index'])->name('employees.index');
     Route::put('/employees/{employee}', [EmployeeController::class, 'update'])->name('employees.update');
+    Route::put('/employees/{employee}/part-time', [EmployeeController::class, 'updatePartTime'])->name('employees.part-time.update');
     Route::post('/employees/sync-hris', [EmployeeController::class, 'syncFromHris'])->name('employees.sync-hris');
     Route::get('/fund-clusters', [FundClusterController::class, 'index'])->name('fund-clusters.index');
     Route::get('/periods', [PayrollPeriodController::class, 'index'])->name('periods.index');
