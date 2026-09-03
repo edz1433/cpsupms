@@ -132,13 +132,6 @@
         const messageEl = overlay.querySelector('[data-process-overlay-message]');
         let running = false;
 
-        function warnBeforeUnload(event) {
-            event.preventDefault();
-            event.returnValue = '';
-
-            return '';
-        }
-
         // The run cannot be dismissed with Escape - it is still going on the server.
         overlay.addEventListener('cancel', function (event) {
             event.preventDefault();
@@ -153,20 +146,16 @@
             }
 
             document.body.classList.add('process-locked');
-            window.addEventListener('beforeunload', warnBeforeUnload);
             running = true;
         }
 
         function reset() {
             running = false;
-            window.removeEventListener('beforeunload', warnBeforeUnload);
             document.body.classList.remove('process-locked');
 
             if (overlay.open) {
                 overlay.close();
             }
-
-            document.body.classList.remove('process-locked');
             document.querySelectorAll('form[data-process-overlay-trigger] [disabled][data-process-disabled]').forEach(function (control) {
                 control.disabled = false;
                 control.removeAttribute('aria-busy');
