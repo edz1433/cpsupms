@@ -112,7 +112,7 @@ class PayrollWorkbookService
         }
 
         if (($layout['mode'] ?? null) === 'office') {
-            return $this->groupedRows($lines, $layout, fn (PayrollLine $line) => $line->employee?->office ?: ($line->fund_source ?: 'UNASSIGNED OFFICE'), false);
+            return $this->groupedRows($lines, $layout, fn (PayrollLine $line) => $line->employee?->office_name ?: ($line->fund_source ?: 'UNASSIGNED OFFICE'), false);
         }
 
         $rows = [];
@@ -176,7 +176,7 @@ class PayrollWorkbookService
         $sheet->removeRow(1, $sheet->getHighestDataRow());
 
         $groups = $batch->lines->groupBy(
-            fn (PayrollLine $line) => $line->employee?->office ?: ($line->fund_source ?: $batch->fundCluster?->fund_source_name ?: 'PART-TIME PERSONNEL'),
+            fn (PayrollLine $line) => $line->employee?->office_name ?: ($line->fund_source ?: $batch->fundCluster?->fund_source_name ?: 'PART-TIME PERSONNEL'),
             preserveKeys: false
         );
         if ($groups->isEmpty()) {
@@ -280,7 +280,7 @@ class PayrollWorkbookService
                 'R' => $line->total_deduction, 'S' => $line->net_amount_received, 'T' => $line->remarks,
             ],
             'SUPPORT SERVICES' => $common + [
-                'D' => $line->employee?->office ?: $line->fund_source, 'E' => $line->rate_per_day, 'F' => $line->gross_income,
+                'D' => $line->employee?->office_name ?: $line->fund_source, 'E' => $line->rate_per_day, 'F' => $line->gross_income,
                 'G' => $late, 'H' => $line->absent_deduction, 'I' => $line->salary_differential, 'J' => $line->earned_for_period,
                 'K' => $tax[3], 'L' => $tax[2], 'N' => $line->sss, 'O' => $line->nsca_mpc,
                 'P' => (float) $line->project_deduction + $other, 'Q' => $line->total_deduction,

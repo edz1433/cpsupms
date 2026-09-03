@@ -10,9 +10,9 @@ class Employee extends Model
     protected $fillable = [
         'campus_id',
         'fund_cluster_id',
+        'office_id',
         'employee_no',
         'full_name',
-        'office',
         'designation',
         'employment_type',
         'salary_grade',
@@ -51,6 +51,20 @@ class Employee extends Model
     public function fundCluster()
     {
         return $this->belongsTo(FundCluster::class);
+    }
+
+    public function office()
+    {
+        return $this->belongsTo(Office::class);
+    }
+
+    /**
+     * Display name of the assigned office, kept as a plain string so payroll
+     * exports and views can use it wherever the old free-text column was read.
+     */
+    public function getOfficeNameAttribute(): ?string
+    {
+        return $this->office?->office_name;
     }
 
     public function scopeVisibleTo(Builder $query, User $user): Builder

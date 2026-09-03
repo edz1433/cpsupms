@@ -7,6 +7,7 @@ use App\Models\Campus;
 use App\Models\Employee;
 use App\Models\FundCluster;
 use App\Models\MissingLogAppeal;
+use App\Models\Office;
 use App\Models\PayrollBatch;
 use App\Models\PayrollLine;
 use App\Models\PayrollPeriod;
@@ -154,7 +155,7 @@ class PayrollWorkflowTest extends TestCase
             'campus_id' => $campus->id,
             'employee_no' => 'HRIS-EXISTING',
             'full_name' => 'Existing Payroll Employee',
-            'office' => 'Old Office',
+            'office_id' => Office::resolveByName('Old Office')->id,
             'employment_type' => 'regular',
             'monthly_salary' => 25000,
         ]);
@@ -196,9 +197,10 @@ class PayrollWorkflowTest extends TestCase
         $this->assertDatabaseHas('employees', [
             'employee_no' => 'HRIS-EXISTING',
             'full_name' => 'Updated Payroll Employee',
-            'office' => 'Updated Office',
             'monthly_salary' => 25000,
         ]);
+        $this->assertDatabaseHas('offices', ['office_name' => 'College of Agriculture']);
+        $this->assertSame('Updated Office', Employee::where('employee_no', 'HRIS-EXISTING')->firstOrFail()->office_name);
     }
 
     public function test_campus_admin_cannot_sync_employees_from_hris(): void
@@ -263,7 +265,7 @@ class PayrollWorkflowTest extends TestCase
             'fund_cluster_id' => $gaaFund->id,
             'employee_no' => 'SEARCH-001',
             'full_name' => 'Maribel Santos',
-            'office' => 'Registrar Office',
+            'office_id' => Office::resolveByName('Registrar Office')->id,
             'designation' => 'Records Officer',
             'employment_type' => 'permanent',
             'monthly_salary' => 30000,
@@ -275,7 +277,7 @@ class PayrollWorkflowTest extends TestCase
             'fund_cluster_id' => $commonFund->id,
             'employee_no' => 'SEARCH-002',
             'full_name' => 'Rico Valdez',
-            'office' => 'Supply Office',
+            'office_id' => Office::resolveByName('Supply Office')->id,
             'designation' => 'Administrative Aide',
             'employment_type' => 'contractual',
             'monthly_salary' => 18000,
@@ -287,7 +289,7 @@ class PayrollWorkflowTest extends TestCase
             'fund_cluster_id' => $gaaFund->id,
             'employee_no' => 'SEARCH-003',
             'full_name' => 'Inactive Payroll Record',
-            'office' => 'Accounting Office',
+            'office_id' => Office::resolveByName('Accounting Office')->id,
             'designation' => 'Assistant',
             'employment_type' => 'permanent',
             'monthly_salary' => 12000,
@@ -340,7 +342,7 @@ class PayrollWorkflowTest extends TestCase
                 'campus_id' => $campus->id,
                 'fund_cluster_id' => $fund->id,
                 'full_name' => 'Updated Employee',
-                'office' => 'Finance Office',
+                'office_id' => Office::resolveByName('Finance Office')->id,
                 'designation' => 'Payroll Officer',
                 'employment_type' => 'Regular',
                 'salary_grade' => 'SG-12',
@@ -402,7 +404,7 @@ class PayrollWorkflowTest extends TestCase
                 'campus_id' => $campus->id,
                 'fund_cluster_id' => $fund->id,
                 'full_name' => 'Indirect PhilHealth Employee',
-                'office' => 'Finance Office',
+                'office_id' => Office::resolveByName('Finance Office')->id,
                 'designation' => 'Payroll Assistant',
                 'employment_type' => 'Job Order',
                 'salary_grade' => null,

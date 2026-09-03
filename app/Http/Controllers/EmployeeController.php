@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Campus;
 use App\Models\Employee;
 use App\Models\FundCluster;
+use App\Models\Office;
 use App\Services\AuditLogger;
 use App\Services\HrisEmployeeSyncService;
 use App\Services\PayrollEmployeeTypeService;
@@ -44,17 +45,23 @@ class EmployeeController extends Controller
             ->orderBy('sort_order')
             ->orderBy('fund_source_name')
             ->get();
+        $offices = Office::query()
+            ->active()
+            ->orderBy('office_name')
+            ->get();
 
         $baseQuery = Employee::query()->visibleTo($user);
         $employees = (clone $baseQuery)
-            ->with(['campus', 'fundCluster'])
+            ->with(['campus', 'fundCluster', 'office'])
             ->when($filters['q'] !== '', function ($query) use ($filters) {
                 $search = $filters['q'];
 
                 $query->where(function ($query) use ($search) {
                     $query->where('employee_no', 'like', "%{$search}%")
                         ->orWhere('full_name', 'like', "%{$search}%")
-                        ->orWhere('office', 'like', "%{$search}%")
+                        ->orWhereHas('office', fn ($officeQuery) => $officeQuery
+                            ->where('office_name', 'like', "%{$search}%")
+                            ->orWhere('office_abbr', 'like', "%{$search}%"))
                         ->orWhere('designation', 'like', "%{$search}%")
                         ->orWhere('employment_type', 'like', "%{$search}%")
                         ->orWhere('salary_grade', 'like', "%{$search}%")
@@ -78,6 +85,7 @@ class EmployeeController extends Controller
             'employees' => $employees,
             'campuses' => $campuses,
             'fundClusters' => $fundClusters,
+            'offices' => $offices,
             'employmentTypes' => $employeeTypes->options(),
             'filters' => $filters,
             'totalEmployees' => (clone $baseQuery)->count(),
@@ -95,7 +103,7 @@ class EmployeeController extends Controller
             'campus_id' => ['required', Rule::exists('campuses', 'id')->where('is_active', true)],
             'fund_cluster_id' => ['nullable', Rule::exists('fund_clusters', 'id')->where('is_active', true)],
             'full_name' => ['required', 'string', 'max:255'],
-            'office' => ['nullable', 'string', 'max:255'],
+            'office_id' => ['nullable', Rule::exists('offices', 'id')->where('stat', 1)],
             'designation' => ['nullable', 'string', 'max:255'],
             'employment_type' => ['required', Rule::in(array_values(PayrollEmployeeTypeService::TYPES))],
             'salary_grade' => ['nullable', 'string', 'max:50'],

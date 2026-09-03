@@ -105,7 +105,7 @@
                 <td>{{ $employee->employee_no }}</td>
                 <td><strong>{{ $employee->full_name }}</strong></td>
                 <td>{{ $employee->campus?->code }}</td>
-                <td>{{ $employee->office }}</td>
+                <td>{{ $employee->office?->office_name }}</td>
                 <td>{{ $employee->designation }}</td>
                 <td><span class="badge gray">{{ $employeeTypeService->normalize($employee->employment_type) }}</span></td>
                 <td>{{ $employee->fundCluster?->fund_source_name }}</td>
@@ -122,7 +122,7 @@
                             data-full-name="{{ $employee->full_name }}"
                             data-campus-id="{{ $employee->campus_id }}"
                             data-fund-cluster-id="{{ $employee->fund_cluster_id }}"
-                            data-office="{{ $employee->office }}"
+                            data-office-id="{{ $employee->office_id }}"
                             data-designation="{{ $employee->designation }}"
                             data-employment-type="{{ $employeeTypeService->normalize($employee->employment_type) }}"
                             data-salary-grade="{{ $employee->salary_grade }}"
@@ -180,7 +180,7 @@
                         @endif
 
                         <label class="field"><span>Fund Cluster</span><select class="select" id="edit_fund_cluster_id" name="fund_cluster_id"><option value="">Unassigned</option>@foreach($fundClusters as $fund)<option value="{{ $fund->id }}">{{ $fund->code }} - {{ $fund->fund_source_name }}</option>@endforeach</select></label>
-                        <label class="field"><span>Office</span><input class="input" id="edit_office" name="office" type="text"></label>
+                        <label class="field"><span>Office</span><select class="select" id="edit_office_id" name="office_id"><option value="">Unassigned</option>@foreach($offices as $office)<option value="{{ $office->id }}">{{ $office->office_name }}</option>@endforeach</select></label>
                         <label class="field"><span>Designation</span><input class="input" id="edit_designation" name="designation" type="text"></label>
                         <label class="field"><span>Employee Status</span><select class="select" id="edit_employment_type" name="employment_type" required>@foreach($employmentTypes as $type => $label)<option value="{{ $label }}">{{ $label }}</option>@endforeach</select></label>
                         <label class="field"><span>Salary Grade</span><input class="input" id="edit_salary_grade" name="salary_grade" type="text"></label>
@@ -229,7 +229,7 @@
             'full_name',
             'campus_id',
             'fund_cluster_id',
-            'office',
+            'office_id',
             'designation',
             'employment_type',
             'salary_grade',
