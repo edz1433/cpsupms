@@ -78,6 +78,7 @@ class HrisEmployeeSyncService
                     'is_active' => true,
                     'last_synced_at' => now(),
                 ]);
+                $this->applyHrisMonthlySalary($employee, $row);
                 $employee->save();
 
                 $stats[$wasExisting ? 'updated' : 'imported']++;
@@ -89,6 +90,28 @@ class HrisEmployeeSyncService
         $this->audit->record('hris.employees_synced', $user, null, 'Employees synced directly from the HRIS database.', $stats);
 
         return ['status' => 'connected', 'message' => 'Employee records synced directly from the HRIS database.'] + $stats;
+    }
+
+    /**
+     * The payroll record owns the salary once it holds one; a salary below 1 means it
+     * was never set here, so the HRIS figure fills it in and the day/hour/minute
+     * rates are re-derived from it.
+     */
+    private function applyHrisMonthlySalary(Employee $employee, array $row): void
+    {
+        if ((float) $employee->monthly_salary >= 1) {
+            return;
+        }
+
+        $hrisSalary = (float) ($row['monthly_salary'] ?? 0);
+
+        if ($hrisSalary < 1) {
+            return;
+        }
+
+        $employee->fill([
+            'monthly_salary' => $hrisSalary,
+        ] + Employee::ratesFromMonthlySalary($hrisSalary));
     }
 
     private function nameFromHris(array $row): string
